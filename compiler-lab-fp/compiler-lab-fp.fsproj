@@ -7,7 +7,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Program.fs" />
+    <Compile Include="src\tests\NyaNyaAST.fs" />
+    <Compile Include="src\tests\NyaNyaParser.fs" />
+    <Compile Include="src\nyaNyaSharp\NyaNyaInterpreter.fs" />
+    <Compile Include="src\nyaNyaSharp\NyaNyaTest.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FParsec" Version="1.1.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Update="FSharp.Core" Version="8.0.400" />
   </ItemGroup>
 
 </Project>
