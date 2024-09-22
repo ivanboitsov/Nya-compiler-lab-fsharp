@@ -57,7 +57,6 @@ type expression =
     | Bool of bool
     | FLoat of float
     | String of token
-    | Builtin of token
     | Let of token * expression * expression
     | LetRec of token * expression * expression
     | Cond of expression * expression * expression

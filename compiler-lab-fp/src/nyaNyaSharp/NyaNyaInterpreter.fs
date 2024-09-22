@@ -2,61 +2,98 @@
 
 open NyaNyaAST
 
-// Окружение для хранения значений переменных
-type Env = Map<string, Expr>
+// The value that the interpreter will return (representing the evaluation result)
+type value =
+    | IntVal of int
+    | FloatVal of float
+    | BoolVal of bool
+    | StringVal of string
+    | ListVal of value list
+    | ClosureVal of token * expression * env
+    | RecClosureVal of token * expression * env * token
+and env = Map<string, value>
 
-// Функция для интерпретации выражений
-let rec eval (env: Env) (expr: Expr) : Expr =
+// Helper function to look up variables in the environment
+let lookup (env: env) (var: string) =
+    match Map.tryFind var env with
+    | Some value -> value
+    | None -> failwithf "Variable '%s' not found" var
+
+// Core evaluation function
+let rec eval (env: env) (expr: expression) : value =
     match expr with
-    | Int _ | Bool _ | Float _ | String _ -> expr // Литералы остаются без изменений
+    | Var v -> lookup env v
 
-    | Var x ->
-        match Map.tryFind x env with
-        | Some value -> value
-        | None -> failwithf "Неизвестная переменная: %s" x
+    | Int n -> IntVal n
+    | FLoat f -> FloatVal f
+    | Bool b -> BoolVal b
+    | String s -> StringVal s
 
-    | Meow (name, valueExpr, bodyExpr) ->
+    | Let (name, valueExpr, body) ->
         let value = eval env valueExpr
         let newEnv = Map.add name value env
-        eval newEnv bodyExpr
+        eval newEnv body
 
-    | Woem (name, valueExpr, bodyExpr) ->
-        let intermediateEnv = ref env
-        let value = eval !intermediateEnv valueExpr
+    | LetRec (name, valueExpr, body) ->
+        // Handle recursive let by introducing the variable to the environment
+        let recEnv = ref env
+        let value = eval !recEnv valueExpr
         let newEnv = Map.add name value env
-        eval newEnv bodyExpr
+        recEnv := newEnv
+        eval newEnv body
 
-    | UwU (param, body) ->
-        UwU(param, body) // Вернем замыкание
-
-    | Nya (condExpr, thenExpr, elseExpr) ->
+    | Cond (condExpr, thenExpr, elseExpr) ->
         let condValue = eval env condExpr
         match condValue with
-        | Bool true -> eval env thenExpr
-        | Bool false -> eval env elseExpr
-        | _ -> failwith "Условие должно быть булевым выражением"
+        | BoolVal true -> eval env thenExpr
+        | BoolVal false -> eval env elseExpr
+        | _ -> failwith "Condition must evaluate to a boolean"
 
-    | Frr (funcExpr, argExpr) ->
-        let func = eval env funcExpr
-        let arg = eval env argExpr
-        match func with
-        | UwU (param, body) ->
-            let newEnv = Map.add param arg env
+    | Lambda (param, body) -> ClosureVal (param, body, env)
+
+    | Application (fnExpr, argExpr) ->
+        let fnValue = eval env fnExpr
+        let argValue = eval env argExpr
+        match fnValue with
+        | ClosureVal (param, body, closureEnv) ->
+            let newEnv = Map.add param argValue closureEnv
             eval newEnv body
-        | _ -> failwith "Выражение не является функцией"
+        | RecClosureVal (param, body, closureEnv, fnName) ->
+            let newEnv = Map.add param argValue (Map.add fnName fnValue closureEnv)
+            eval newEnv body
+        | _ -> failwith "Expected a function in application"
 
-    | Meowing (op, leftExpr, rightExpr) ->
-        let left = eval env leftExpr
-        let right = eval env rightExpr
-        match left, right with
-        | Int l, Int r ->
-            match op with
-            | "+" -> Int (l + r)
-            | "-" -> Int (l - r)
-            | "*" -> Int (l * r)
-            | "/" -> Int (l / r)
-            | _ -> failwithf "Неизвестная операция: %s" op
-        | _ -> failwith "Операция поддерживается только для целых чисел"
+    | Operaions (op, arity, args) ->
+        let evaluatedArgs = List.map (eval env) args
+        evalOp op arity evaluatedArgs
 
-    | Cats exprList ->
-        Cats (List.map (eval env) exprList)
+    | List exprs ->
+        let values = List.map (eval env) exprs
+        ListVal values
+
+and evalOp op arity args =
+    // Handle various operations (+, -, *, /, etc.)
+    match (op, args) with
+    | (ADD, [IntVal l; IntVal r]) -> IntVal (l + r)
+    | (SUB, [IntVal l; IntVal r]) -> IntVal (l - r)
+    | (MUL, [IntVal l; IntVal r]) -> IntVal (l * r)
+    | (DIV, [IntVal l; IntVal r]) -> IntVal (l / r)
+    | (ADD, [FloatVal l; FloatVal r]) -> FloatVal (l + r)
+    | (SUB, [FloatVal l; FloatVal r]) -> FloatVal (l - r)
+    | (MUL, [FloatVal l; FloatVal r]) -> FloatVal (l * r)
+    | (DIV, [FloatVal l; FloatVal r]) -> FloatVal (l / r)
+    | (GT, [IntVal l; IntVal r]) -> BoolVal (l > r)
+    | (LT, [IntVal l; IntVal r]) -> BoolVal (l < r)
+    | (GE, [IntVal l; IntVal r]) -> BoolVal (l >= r)
+    | (LE, [IntVal l; IntVal r]) -> BoolVal (l <= r)
+    | (EQ, [IntVal l; IntVal r]) -> BoolVal (l = r)
+    | _ -> failwithf "Unsupported operation or incorrect arity: %s" op
+
+// Helper function to run the entire program
+let runProgram (input: string) =
+    match NyaNyaParser.parseInput input with
+    | Result.Ok expr ->
+        let initialEnv = Map.empty
+        let result = eval initialEnv expr
+        printfn "Result: %A" result
+    | Result.Error msg -> printfn "Parse error: %s" msg
