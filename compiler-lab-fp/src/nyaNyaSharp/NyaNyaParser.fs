@@ -3,29 +3,21 @@
 open FParsec
 open NyaNyaAST
 
-// Перенаправляем вызовы к парсеру через ссылку
-let pExpr, pExprRef = createParserForwardedToRef<expression, unit> ()
+let pExpr, pExprRef = createParserForwardedToRef()
 
-// Парсер для строковых идентификаторов
-let pIdentifier: Parser<string, unit> =
-    many1Satisfy2L isLetter (fun c -> isLetter c || isDigit c) "identifier"
+let pExprFloat = pfloat .>> spaces |>> Float
 
-let pToken : Parser<string, unit> =
-    let isVarFirstChar c = isLetter c || c = '_'
-    let isVarChar c = isLetter c || isDigit c || c = '_'
-    many1Satisfy2 isVarFirstChar isVarChar |>> token
+let pBool =
+    pstring "true" <|> pstring "false"  .>> spaces |>> 
+        function
+            | "true" -> Bool(true)
+            | "false" -> Bool(false)
 
-let pVar : Parser<expression, unit> =
-    pToken |>> Var
+let pToken =
+    let isIdentifierFirstChar c = isLetter c || c = '_'
+    let isIdentifierChar c = isLetter c || isDigit c || c = '_'
 
-let pInt : Parser<expression, unit> =
-    pint32 .>> notFollowedBy(satisfy (fun c -> c = '.')) |>> Int
-
-let pFloat : Parser<expression, unit> = 
-    pfloat |>> FLoat
-
-let pBool : Parser<expression, unit> =
-    (stringReturn TRUE true) <|> (stringReturn FALSE false) |>> Bool
+    many1Satisfy2L isIdentifierFirstChar isIdentifierChar "invalid variable or function pToken" .>> spaces |>> Var
 
 let stringLiteral =
     let escape =  anyOf "\"\\/bfnrt"
@@ -35,7 +27,7 @@ let stringLiteral =
                       | 'n' -> "\n"
                       | 'r' -> "\r"
                       | 't' -> "\t"
-                      | c   -> string c
+                      | c   -> string c 
 
     let unicodeEscape =
         
@@ -52,64 +44,120 @@ let stringLiteral =
     between (pstring "\"") (pstring "\"")
             (stringsSepBy normalCharSnippet escapedCharSnippet)
 
-let pString : Parser<expression, unit> =
-    stringLiteral |>> String 
+let pString = stringLiteral |>> String
 
-let pLet : Parser<expression, unit> = 
-    pipe3 (pstring LET >>. spaces >>. pToken .>> spaces) 
-          (pstring ASSIGN >>. spaces >>. pExpr .>> spaces)
-          (pExpr) 
-          (fun a b c -> Let(a, b, c))
+let Operator = choice[
+                    pstring "&" |>> fun _ -> "&"
+                    pstring "|" |>> fun _ -> "|"
+                    pstring "not" |>> fun _ -> "not"
+                    pstring "+" |>> fun _ -> "+"
+                    pstring "-" |>> fun _ -> "-"
+                    pstring "*" |>> fun _ -> "*"
+                    pstring "/" |>> fun _ -> "/"
+                    pstring "==" |>> fun _ -> "=="
+                    pstring "!=" |>> fun _ -> "!="
+                    pstring ">" |>> fun _ -> ">"
+                    pstring "<" |>> fun _ -> "<"
+                    pstring ">=" |>> fun _ -> ">="
+                    pstring "<=" |>> fun _ -> "<="
+                    ]
 
-let pLetrec : Parser<expression, unit> = 
-    pipe3 (pstring REC_LET >>. spaces >>. pToken .>> spaces) 
-          (pstring ASSIGN >>. spaces >>. pExpr .>> spaces)
-          (pExpr) 
-          (fun a b c -> LetRec(a, b, c))
+let pVar = 
+    pstring "meow" >>. spaces >>. pToken .>>. 
+    (spaces >>. skipChar '=' >>. spaces >>. pExpr) .>> spaces .>>. 
+    many pExpr .>> spaces|>> 
+        fun ((Var(pToken), value), expr_list) -> Let(pToken, value, Prog(expr_list)) 
 
-let ops = [ADD; SUB ; MUL; DIV; GE; LE; GT; LT; EQ; HEAD; TAIL; NEG]
+let pMeth = 
+    pToken .>> spaces .>>.
+    (skipChar '.' >>. pToken .>> spaces) .>>.
+    (skipChar '(' >>. many pExpr .>> spaces .>> skipChar ')' .>> spaces) |>>
+        fun((list, Var(method)), args) -> 
+            let acc = Application(PrimOp(method), list)
+            List.fold (fun acc x -> Application(acc, x)) acc args 
+            
 
-let pCond : Parser<expression, unit> = 
-    pipe3 (pstring IF >>. spaces >>. pExpr .>> spaces) (pstring THEN >>. spaces >>. pExpr .>> spaces)
-            (pstring ELSE >>. spaces >>. pExpr) (fun a b c -> Cond(a, b ,c))
+let pCond =
+    (pstring "nya" >>. spaces >>. pExpr .>> spaces) .>>.
+    (pstring "uw" >>. spaces >>. skipChar '{' >>. spaces >>. many pExpr .>> spaces .>> skipChar '}' .>> spaces) .>>.
+    (pstring "hss" >>. spaces >>. skipChar '{' >>. spaces >>. many pExpr .>> spaces .>> skipChar '}' .>> spaces) |>>
+    fun ((cond, res), alt) -> Cond(cond, Prog(res), Prog(alt))
 
-let pLambda : Parser<expression, unit> = 
-    pipe2 (pstring FUN >>. spaces >>. pToken .>> spaces) (pstring ARROW >>. spaces >>. pExpr) 
-        (fun a b -> Lambda(a, b))
+let pList = 
+    skipChar '[' >>. spaces >>. many pExpr .>> spaces .>> skipChar ']' .>> spaces |>> List
 
-let pApp : Parser<expression, unit> = 
-    pipe2 (pstring R_APP >>. spaces >>. pExpr .>> spaces) (pExpr) (fun a b -> Application(a, b))
+let pIndexList = 
+    pToken .>>.
+    (spaces >>. skipChar '[' >>. spaces >>. pint32 .>> spaces .>> skipChar ']' .>> spaces) |>>
+        fun(list, num) -> 
+            Application(Application(PrimOp("[]"), list), Int(num))
 
-let listBetweenStrings sOpen sClose pElement f =
-    between (pstring sOpen) (pstring sClose)
-            (spaces >>. sepBy (pElement .>> spaces) (pstring "," >>. spaces) |>> f)
+let pFunction =
+    (pstring "frr" >>. spaces >>. pToken) .>>. 
+    (skipChar '(' >>. spaces  >>. many pToken .>> skipChar ')') .>>. 
+    (spaces >>. skipChar '{' >>. spaces >>. many pExpr .>> spaces .>> skipChar '}' .>> spaces) .>>. 
+    (many pExpr .>> spaces) |>> 
+        fun(((Var(func), params), body), expr_list) -> 
+            
+            let ids_extracted = 
+                params |> List.map(
+                    function
+                        |Var(x) -> x 
+            )
 
-let pList = listBetweenStrings "[" "]" pExpr List
+            Let(func, Lambda(ids_extracted, Prog(body)), Prog(expr_list))
 
-do pExprRef.Value <- choice [
-    pApp
-    pLambda
-    pCond
-    pLet
-    pLetrec
-    pList
-    pString
-    pVar
-    attempt pInt
-    pFloat
+let pFunctionRec =
+    (pstring "fur" >>. spaces >>. pToken) .>>. 
+    (skipChar '(' >>. spaces  >>. many pToken .>> skipChar ')') .>>. 
+    (spaces >>. skipChar '{' >>. spaces >>. many pExpr .>> spaces .>> skipChar '}' .>> spaces) .>>. 
+    (many pExpr .>> spaces) |>> 
+        fun(((Var(func), params), body), expr_list) -> 
+            
+            let ids_extracted = 
+                params |> List.map(
+                    function
+                        |Var(x) -> x 
+            )
+
+            LetRec(func, Lambda(ids_extracted, Prog(body)), Prog(expr_list))
+
+let pFunCall =
+    pToken .>>. 
+    (spaces >>. skipChar '(' >>. spaces >>. many pExpr .>> spaces .>> skipChar ')' .>> spaces) |>>
+        fun(func, arg) -> Application(func, List(arg))
+
+let pOperation = 
+    (pExprFloat <|> attempt pFunCall <|> pToken <|> pBool) .>> spaces .>>. 
+    Operator .>> spaces .>>. 
+    (pExprFloat <|> attempt pFunCall <|> pToken <|> pBool) .>> spaces |>> 
+        fun ((e1, op), e2) -> 
+            Application(Application(PrimOp(op),  e1),  e2)
+
+let pExprPrint =
+    pstring "sayNya" >>. spaces >>. skipChar '(' >>. spaces >>. many pExpr .>> spaces .>> skipChar ')' .>> spaces |>> fun(arg) -> Print(Prog(arg))
+
+pExprRef := choice[
+    pString;
+    pFunctionRec; 
+    pFunction; 
+    pExprPrint; 
+    pCond; 
+    attempt pOperation;  
+    attempt pFunCall; 
+    attempt pIndexList; 
+    attempt pMeth; 
+    pVar; pList; 
+    pExprFloat; 
+    pBool; 
+    pToken;
 ]
 
-
-let fprogram : Parser<expression, unit> = spaces >>. pExpr .>> spaces .>> eof
-
-let testParser p str =
-    match run p str with
-    | Success(result, _, _)   -> printfn "Success: %A" result
-    | Failure(errorMsg, _, _) -> printfn "Failure: %s" errorMsg
+let final = spaces >>. many pExpr .>> eof |>> Prog
 
 // Функция для запуска парсера
 let parseInput (input: string) = 
-    match run fprogram input with
+    match run pExpr input with
     | Success(result, _, _) -> Result.Ok result
     | Failure(errorMsg, errorState, _) ->
         let errorPosition = errorState.Position

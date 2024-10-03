@@ -2,98 +2,84 @@
 
 open NyaNyaAST
 
-// The value that the interpreter will return (representing the evaluation result)
-type value =
-    | IntVal of int
-    | FloatVal of float
-    | BoolVal of bool
-    | StringVal of string
-    | ListVal of value list
-    | ClosureVal of token * expression * env
-    | RecClosureVal of token * expression * env * token
-and env = Map<string, value>
+// Минимальное количество аргументов для операций
+let argsNum = function
+    | "&" | "|" | "+" | "-" | "*" | "/" | "==" | "!=" | ">" | "<" | ">=" | "<=" | "[]" | "append" -> 2
+    | "!" -> 1
+    | _ -> failwith "Неизвестная операция"
 
-// Helper function to look up variables in the environment
-let lookup (env: env) (var: string) =
-    match Map.tryFind var env with
-    | Some value -> value
-    | None -> failwithf "Variable '%s' not found" var
+// Выполнение операций
+let performOperation op args =
+    match op, args with
+    | "[]", [List(list); Int(n)] -> list.[n]
+    | "append", [List(list); x] -> List(list @ [x])
+    | "&", [Bool(a); Bool(b)] -> Bool(a && b)
+    | "|", [Bool(a); Bool(b)] -> Bool(a || b)
+    | "not", [Bool(a)] -> Bool(not a)
+    | "+", [Float(a); Float(b)] -> Float(a + b)
+    | "-", [Float(a); Float(b)] -> Float(a - b)
+    | "*", [Float(a); Float(b)] -> Float(a * b)
+    | "/", [Float(a); Float(b)] -> Float(a / b)
+    | ">", [Float(a); Float(b)] -> Bool(a > b)
+    | "<", [Float(a); Float(b)] -> Bool(a < b)
+    | ">=", [Float(a); Float(b)] -> Bool(a >= b)
+    | "<=", [Float(a); Float(b)] -> Bool(a <= b)
+    | "==", [Float(a); Float(b)] -> Bool(a = b)
+    | "!=", [Float(a); Float(b)] -> Bool(a <> b)
+    | _ -> failwith "Неверная операция или аргументы"
 
-// Core evaluation function
-let rec eval (env: env) (expr: expression) : value =
-    match expr with
-    | Var v -> lookup env v
+let rec eval exp env =
+    match exp with
+    | Application(e1, e2) -> apply (eval e1 env) (eval e2 env)
+    | Bool(n) -> Bool(n)
+    | Int(n) -> Int(n)
+    | Float(n) -> Float(n)
+    | List(n) -> List(List.map (fun x -> eval x env) n)
+    | Var(x) -> Map.find x env
+    | PrimOp(f) -> Operations(f, argsNum f, [])
+    | Cond(cond, yes, no) ->
+        if eval cond env = Bool(true) then eval yes env else eval no env
+    | Operations(id, n, el) -> Operations(id, n, el)
+    | Let(id, e1, e2) ->
+        let r = eval e1 env
+        eval e2 (Map.add id r env)
+    | LetRec(id, e1, e2) ->
+        eval e2 (Map.add id (RecClosure(e1, env, id)) env)
+    | Lambda(param, body) -> Closure(Lambda(param, body), env)
+    | Closure(Lambda(param, body), env) -> exp
+    | Prog(exp_list) ->
+        if List.isEmpty exp_list then None
+        else exp_list |> List.map (fun x -> eval x env) |> List.last
+    | Print(x) ->
+        let res = eval x env
+        match res with
+        | Float(n) -> printfn "%A" n
+        | Int(n) -> printfn "%A" n
+        | Bool(n) -> printfn "%A" n
+        | List(n) -> printfn "%A" n
+        | String(s) -> printfn "%s" s  // Поддержка вывода строк
+        | _ -> printfn "the type does not support printing"
+        None
+    | _ -> exp
 
-    | Int n -> IntVal n
-    | FLoat f -> FloatVal f
-    | Bool b -> BoolVal b
-    | String s -> StringVal s
+and apply e1 e2 = 
+        match e1 with
+        | Closure(Lambda(param,body),env) -> 
+            match e2 with
+                |List(value_list) -> 
+                    value_list
+                    let env_add = List.zip param value_list |> Map.ofList
+                    let new_env = Map.fold(fun acc key value -> Map.add key value acc) env env_add
+                    eval body new_env
+        | RecClosure(Lambda(param,body),env, id) -> 
+            match e2 with
+                |List(value_list) -> 
+                    value_list
+                    let env_add = List.zip param value_list |> Map.ofList
+                    let new_env = Map.fold(fun acc key value -> Map.add key value acc) env env_add
+                    eval body (Map.add id e1 new_env)
+        | Operations(id,n,args) ->
+            if n=1 then (performOperation id)(args@[e2])
+            else Operations(id, n-1, args@[e2])
 
-    | Let (name, valueExpr, body) ->
-        let value = eval env valueExpr
-        let newEnv = Map.add name value env
-        eval newEnv body
-
-    | LetRec (name, valueExpr, body) ->
-        // Handle recursive let by introducing the variable to the environment
-        let recEnv = ref env
-        let value = eval !recEnv valueExpr
-        let newEnv = Map.add name value env
-        recEnv := newEnv
-        eval newEnv body
-
-    | Cond (condExpr, thenExpr, elseExpr) ->
-        let condValue = eval env condExpr
-        match condValue with
-        | BoolVal true -> eval env thenExpr
-        | BoolVal false -> eval env elseExpr
-        | _ -> failwith "Condition must evaluate to a boolean"
-
-    | Lambda (param, body) -> ClosureVal (param, body, env)
-
-    | Application (fnExpr, argExpr) ->
-        let fnValue = eval env fnExpr
-        let argValue = eval env argExpr
-        match fnValue with
-        | ClosureVal (param, body, closureEnv) ->
-            let newEnv = Map.add param argValue closureEnv
-            eval newEnv body
-        | RecClosureVal (param, body, closureEnv, fnName) ->
-            let newEnv = Map.add param argValue (Map.add fnName fnValue closureEnv)
-            eval newEnv body
-        | _ -> failwith "Expected a function in application"
-
-    | Operaions (op, arity, args) ->
-        let evaluatedArgs = List.map (eval env) args
-        evalOp op arity evaluatedArgs
-
-    | List exprs ->
-        let values = List.map (eval env) exprs
-        ListVal values
-
-and evalOp op arity args =
-    // Handle various operations (+, -, *, /, etc.)
-    match (op, args) with
-    | (ADD, [IntVal l; IntVal r]) -> IntVal (l + r)
-    | (SUB, [IntVal l; IntVal r]) -> IntVal (l - r)
-    | (MUL, [IntVal l; IntVal r]) -> IntVal (l * r)
-    | (DIV, [IntVal l; IntVal r]) -> IntVal (l / r)
-    | (ADD, [FloatVal l; FloatVal r]) -> FloatVal (l + r)
-    | (SUB, [FloatVal l; FloatVal r]) -> FloatVal (l - r)
-    | (MUL, [FloatVal l; FloatVal r]) -> FloatVal (l * r)
-    | (DIV, [FloatVal l; FloatVal r]) -> FloatVal (l / r)
-    | (GT, [IntVal l; IntVal r]) -> BoolVal (l > r)
-    | (LT, [IntVal l; IntVal r]) -> BoolVal (l < r)
-    | (GE, [IntVal l; IntVal r]) -> BoolVal (l >= r)
-    | (LE, [IntVal l; IntVal r]) -> BoolVal (l <= r)
-    | (EQ, [IntVal l; IntVal r]) -> BoolVal (l = r)
-    | _ -> failwithf "Unsupported operation or incorrect arity: %s" op
-
-// Helper function to run the entire program
-let runProgram (input: string) =
-    match NyaNyaParser.parseInput input with
-    | Result.Ok expr ->
-        let initialEnv = Map.empty
-        let result = eval initialEnv expr
-        printfn "Result: %A" result
-    | Result.Error msg -> printfn "Parse error: %s" msg
+let exec exp = eval exp Map.empty
