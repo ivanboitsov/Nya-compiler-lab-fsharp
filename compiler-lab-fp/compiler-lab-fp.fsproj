@@ -6,8 +6,21 @@
     <RootNamespace>compiler_lab_fp</RootNamespace>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Compile Include="Program.fs" />
+  <ItemGroup>  
+    <Compile Include="src\nyaNyaSharp\NyaNyaAST.fs" />
+    <Compile Include="src\nyaNyaSharp\NyaNyaParser.fs" />
+    <Compile Include="src\nyaNyaSharp\NyaNyaInterpreter.fs" />
+    <Compile Include="src\nyaNyaSharp\NyaNyaMain.fs" />
   </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FParsec" Version="1.1.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Update="FSharp.Core" Version="8.0.400" />
+  </ItemGroup>
+
+  <ItemGroup />
 
 </Project>
